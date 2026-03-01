@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.sqlite3
+
+# Virtual env
+myenv/
+venv/
+.env/
+
+# Secrets
+.env
+*.env
+
+#model
+model/
+tokenizer/
+
+# OS files
+.DS_Store
