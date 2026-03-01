@@ -7,18 +7,59 @@ from transformers import (
     Trainer,
     TrainingArguments
 )
+import torch
 import os
 
-TOKENIZER_PATH = "foundation_llm/tokenizer"
-MODEL_PATH = "foundation_llm/model"
+TOKENIZER_PATH = "tokenizer"
+MODEL_PATH = "model"
+os.makedirs(MODEL_PATH, exist_ok=True)
 
-print("Loading tokenizer...")
+# -------- DEVICE DETECTION --------
+def get_device():
+    if torch.cuda.is_available():
+        device = "cuda"
+        print(f"GPU detected: {torch.cuda.get_device_name(0)}")
+    elif torch.backends.mps.is_available():
+        device = "mps"
+        print("Apple Silicon (MPS) detected")
+    else:
+        device = "cpu"
+        print("No GPU found, using CPU")
+    print("Using device:", device)
+    return device
+
+device = get_device()
+
+# -------- DEVICE-SPECIFIC TRAINING SETTINGS --------
+if device == "cuda":
+    use_fp16 = True
+    use_bf16 = False
+    batch_size = 32
+    num_workers = 2
+elif device == "mps":
+    use_fp16 = False      # MPS does not support fp16 training
+    use_bf16 = False      # bf16 also unsupported on MPS
+    batch_size = 16       # Unified memory — conservative batch size
+    num_workers = 0       # MPS + multiprocessing can cause deadlocks
+else:  # CPU
+    use_fp16 = False
+    use_bf16 = False
+    batch_size = 4        # Small batch to avoid RAM exhaustion
+    num_workers = 0
+
+print(f"Settings → fp16: {use_fp16} | batch_size: {batch_size} | workers: {num_workers}")
+
+# -------- TOKENIZER --------
+print("\nLoading tokenizer...")
 tokenizer = GPT2TokenizerFast.from_pretrained(TOKENIZER_PATH)
-
 tokenizer.pad_token = tokenizer.eos_token
 
+# -------- DATASET --------
 print("Loading dataset...")
 dataset = load_dataset("roneneldan/TinyStories", split="train")
+
+# Uncomment to use a subset (recommended for CPU or first test runs)
+# dataset = dataset.select(range(100_000))
 
 def tokenize_function(examples):
     return tokenizer(
@@ -28,14 +69,17 @@ def tokenize_function(examples):
         max_length=256,
     )
 
+print("Tokenizing dataset (this may take a few minutes)...")
 tokenized_dataset = dataset.map(
     tokenize_function,
     batched=True,
+    num_proc=2 if device == "cuda" else 1,   # MPS/CPU safer with 1 process
     remove_columns=["text"]
 )
+tokenized_dataset.set_format(type="torch")
 
-print("Building GPT config...")
-
+# -------- MODEL --------
+print("\nBuilding GPT config...")
 config = GPT2Config(
     vocab_size=tokenizer.vocab_size,
     n_positions=256,
@@ -44,27 +88,38 @@ config = GPT2Config(
     n_layer=6,
     n_head=8,
 )
-
 model = GPT2LMHeadModel(config)
+print(f"Model parameters: {model.num_parameters():,}")
 
+# -------- DATA COLLATOR --------
 data_collator = DataCollatorForLanguageModeling(
     tokenizer=tokenizer,
     mlm=False,
 )
 
+# -------- TRAINING ARGS --------
 training_args = TrainingArguments(
     output_dir=MODEL_PATH,
     overwrite_output_dir=True,
     num_train_epochs=1,
-    per_device_train_batch_size=8,
-    save_steps=500,
+    per_device_train_batch_size=batch_size,
+    gradient_accumulation_steps=4,
+    save_steps=1000,
     save_total_limit=2,
     logging_steps=100,
     learning_rate=5e-4,
-    warmup_steps=100,
-    fp16=False,
+    warmup_steps=200,
+    fp16=use_fp16,
+    bf16=use_bf16,
+    dataloader_num_workers=num_workers,
+    prediction_loss_only=True,
+    report_to="none",
+    lr_scheduler_type="cosine",
+    no_cuda=(device != "cuda"),             # Prevents Trainer from using CUDA when on MPS/CPU
+    use_mps_device=(device == "mps"),       # Explicitly enable MPS for Trainer
 )
 
+# -------- TRAINER --------
 trainer = Trainer(
     model=model,
     args=training_args,
@@ -72,11 +127,10 @@ trainer = Trainer(
     data_collator=data_collator,
 )
 
-print("Training model...")
+print("\nTraining model...")
 trainer.train()
 
-print("Saving model...")
+print("\nSaving model...")
 trainer.save_model(MODEL_PATH)
 tokenizer.save_pretrained(MODEL_PATH)
-
-print("Training complete!")
+print(f"Training complete! Model saved to: {MODEL_PATH}")
