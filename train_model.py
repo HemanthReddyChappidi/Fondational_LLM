@@ -19,7 +19,7 @@ def get_device():
     if torch.cuda.is_available():
         device = "cuda"
         print(f"GPU detected: {torch.cuda.get_device_name(0)}")
-    elif torch.backends.mps.is_available():
+    elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available() and torch.backends.mps.is_built():
         device = "mps"
         print("Apple Silicon (MPS) detected")
     else:
@@ -37,14 +37,14 @@ if device == "cuda":
     batch_size = 32
     num_workers = 2
 elif device == "mps":
-    use_fp16 = False      # MPS does not support fp16 training
-    use_bf16 = False      # bf16 also unsupported on MPS
-    batch_size = 16       # Unified memory — conservative batch size
-    num_workers = 0       # MPS + multiprocessing can cause deadlocks
+    use_fp16 = False
+    use_bf16 = False
+    batch_size = 16
+    num_workers = 0
 else:  # CPU
     use_fp16 = False
     use_bf16 = False
-    batch_size = 4        # Small batch to avoid RAM exhaustion
+    batch_size = 4
     num_workers = 0
 
 print(f"Settings → fp16: {use_fp16} | batch_size: {batch_size} | workers: {num_workers}")
@@ -73,7 +73,7 @@ print("Tokenizing dataset (this may take a few minutes)...")
 tokenized_dataset = dataset.map(
     tokenize_function,
     batched=True,
-    num_proc=2 if device == "cuda" else 1,   # MPS/CPU safer with 1 process
+    num_proc=2 if device == "cuda" else 1,
     remove_columns=["text"]
 )
 tokenized_dataset.set_format(type="torch")
@@ -115,8 +115,7 @@ training_args = TrainingArguments(
     prediction_loss_only=True,
     report_to="none",
     lr_scheduler_type="cosine",
-    no_cuda=(device != "cuda"),             # Prevents Trainer from using CUDA when on MPS/CPU
-    use_mps_device=(device == "mps"),       # Explicitly enable MPS for Trainer
+    use_cpu=(device == "cpu"),
 )
 
 # -------- TRAINER --------
