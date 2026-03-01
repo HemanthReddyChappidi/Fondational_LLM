@@ -1,16 +1,3 @@
-Perfect 😄 let’s write a proper **GitHub README** for this module.
-This should look professional and explain the full pipeline.
-
-Create file:
-
-```bash
-foundation_llm/README.md
-```
-
-Paste this 👇
-
----
-
 # 🧠 Foundation LLM – Train & Fine-Tune a GPT Model From Scratch
 
 This module demonstrates the **full lifecycle of training a transformer language model**:
